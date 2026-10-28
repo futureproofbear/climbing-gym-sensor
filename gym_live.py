@@ -1,6 +1,6 @@
 """Gym pattern of life on the Pi: DeepX pose on a video or camera stream, climbs and counts out, no images out.
 
-    python3 gym_live.py SOURCE MAP_DIR OUT_DIR [--model ~/edge-vision/yolo11s-pose_deepx_model]
+    python3 gym_live.py SOURCE MAP_DIR OUT_DIR [--model models/yolo11s-pose_deepx_model]
 SOURCE is a video file or a stream URL (rtsp://...). MAP_DIR is gym_map.py's output for this camera view.
 Appends each finished climb to OUT_DIR/climbs.jsonl as it ends and rewrites OUT_DIR/summary.json every minute.
 A file is read at its own frame rate's timestamps; a stream uses the wall clock.
@@ -20,7 +20,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("source")
 ap.add_argument("map_dir")
 ap.add_argument("out")
-ap.add_argument("--model", default=os.path.expanduser("~/edge-vision/yolo11s-pose_deepx_model"))
+ap.add_argument("--model", default=os.path.join(os.environ.get("MODELS_DIR", "models"), "yolo11s-pose_deepx_model"))
 ap.add_argument("--deploy", action="store_true", help="suppress per-minute counts below MIN_GROUP")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)

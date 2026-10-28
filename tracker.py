@@ -1,6 +1,5 @@
 """People tracker for gym_pol.py: each person keeps an ID from frame to frame, and a track lost for a moment is
-continued when the same person reappears nearby. Taken from the footfall counter of the edge-vision garden sensor
-(ai-camera/footfall.py: Track, Tracker and the settings they use), so both count people the same way.
+continued when the same person reappears nearby.
 """
 from collections import deque
 import os
@@ -17,7 +16,7 @@ STAY_DIST = 0.5                                              # body heights: rea
 EDGE = 0.10            # fraction of the frame width at the left / right edges where people really enter and leave
 LINK_SECONDS = float(os.environ.get("LINK_SECONDS", 12.0))   # mid-scene disappearance: wait this long for a reappearance
 LINK_SPEED = (0.15, 2.0)                                     # plausible walking speed across the gap, body heights / s
-MAX_SPEED = 3.0        # body heights / s: no pedestrian is faster; caps the velocity one jumpy box would imply
+MAX_SPEED = 3.0        # body heights / s: no person on foot is faster; caps the velocity one jumpy box would imply
 STAND_SECONDS = float(os.environ.get("STAND_SECONDS", 3.0))  # must stay put at least this long to be standing
 STAND_MOVE = float(os.environ.get("STAND_MOVE", 0.4))        # body heights of movement still counted as standing
 RUN_SPEED = float(os.environ.get("RUN_SPEED", 1.2))          # net body heights / s above which = running
@@ -84,7 +83,7 @@ class Track:
         self.vel = np.zeros(2)         # centre velocity, px/s
         self.first_t = self.last_t = t
         self.hits = 1
-        self.uid = None                # unique pedestrian number, set on confirmation
+        self.uid = None                # unique person number, set on confirmation
         self.kpts = kpts               # latest COCO-17 keypoints (x, y, conf) in frame pixels, or None
         self.hist = deque(maxlen=600)  # (t, cx, cy, h, sit) per update; sit = True / False / None (no clear pose)
         self.trace = deque(maxlen=600)  # (t, box, keypoints, live activity) per update, for the per-person record
@@ -92,7 +91,7 @@ class Track:
         self._cand, self._cand_t = None, None   # live label waiting out LABEL_HOLD
         self.hip_off = None            # hips minus box centre, px, smoothed: fills in when the hips are hidden
         self._record(t)
-        self.rowid = None              # footfall database row, for the activity / dwell update at the end
+        self.rowid = None              # storage row id, for callers that store tracks
 
     def predicted(self, t):
         dx, dy = self.vel * (t - self.last_t)
@@ -127,8 +126,8 @@ class Track:
 
     def _anchor(self):
         """Where the person is, for movement: the mid-hip point when both hips are clear, else the box centre
-        plus the last hip offset. A box cut short by a bush or tree trunk moves its centre without the person
-        moving (a woman carrying a coffee read "running" for two updates that way); the hips stay put."""
+        plus the last hip offset. A box cut short by something in front of the person moves its centre without
+        the person moving; the hips stay put."""
         b, k = self.box, self.kpts
         c = np.array([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2])
         if k is not None and k[11][2] >= HIP_MIN and k[12][2] >= HIP_MIN:
@@ -189,7 +188,7 @@ class Tracker:
         self.frame = frame             # (width, height) of the frame, for the scene rule in _revivable
         self.tracks = []
         self.next_uid = 1
-        self.on_new = on_new           # called with (track, t) once per unique pedestrian
+        self.on_new = on_new           # called with (track, t) once per unique person
         self.on_end = on_end           # called with (track,) when a confirmed track is dropped
         self.dist_thr, self.max_age = dist_thr, max_age
         self.ended = []                # confirmed tracks lost recently, kept for revival (see _revivable)
@@ -204,9 +203,8 @@ class Tracker:
             ph = max(p[3] - p[1], 1.0)
             pc, lc = (p[:2] + p[2:]) / 2, (tr.box[:2] + tr.box[2:]) / 2
             for di, b in enumerate(boxes):
-                # nearer of predicted and last-seen position: a wrong velocity estimate alone must not lose the
-                # person (2026-10-22 15:03:43: one box 90 px too high, the next 0.17 s later back in place, a
-                # second track and a second count)
+                # nearer of predicted and last-seen position: a wrong velocity estimate alone (one box far off,
+                # the next back in place) must not lose the person and start a second track
                 ov = max(iou(p, b), iou(tr.box, b))
                 bc = (b[:2] + b[2:]) / 2
                 dist = min(np.linalg.norm(bc - pc), np.linalg.norm(bc - lc)) / max(ph, b[3] - b[1], 1.0)
@@ -229,7 +227,7 @@ class Tracker:
                 self.ended.append(tr)       # held for REVIVE_SECONDS in case the same person reappears
         self.tracks = alive
         still = []
-        for tr in self.ended:               # nobody took it over: the pedestrian really left
+        for tr in self.ended:               # nobody took it over: the person really left
             if t - tr.last_t > self.max_age + self._hold(tr):
                 if self.on_end:
                     self.on_end(tr)
@@ -276,14 +274,11 @@ class Tracker:
                  seen (allowing for its walking speed), at a similar size;
         stayed   it started within half a body height of where the old one was last seen, within the old one's
                  hold time, at any plausible size: someone standing or working in one place who bent down,
-                 crouched or was hidden by leaves for a while (23 Oct count checks: a man on his phone and two
-                 gardeners were each counted again);
+                 crouched or was briefly hidden (without this, each is counted again);
         scene    the old track ended mid-scene, away from the frame edges where people really come and go, so
-                 the person went behind something (the trees and hedge across the main path) rather than leaving.
-                 The new one starts mid-scene within LINK_SECONDS, further along the old one's direction of
-                 travel, at a plausible walking speed for the gap. Without this, one walker crossing the garden
-                 was counted twice (2026-10-18 09:23:56 / 09:24:05: ended at x 0.67 heading left, reappeared at
-                 x 0.29 5 s later, 0.6 body heights/s)."""
+                 the person went behind something rather than leaving. The new one starts mid-scene within
+                 LINK_SECONDS, further along the old one's direction of travel, at a plausible walking speed for
+                 the gap (without this, one person passing behind an obstacle is counted twice)."""
         nb = new.hist[0]                                    # (t, cx, cy, h, sit) at the new track's start
         best, best_d = None, None
         # hand-over: a confirmed track still alive but not seen since this one started (it stopped matching

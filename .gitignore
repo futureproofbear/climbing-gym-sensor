@@ -1,4 +1,4 @@
-# media and data stay out of this repo (no images of people)
+# media and data stay out of this repo: no photos or video of people, only skeleton figures in docs/
 *.mp4
 *.mov
 *.jpg
@@ -11,3 +11,5 @@
 *.dxnn
 models/
 __pycache__/
+!docs/*.png
+!docs/*.gif

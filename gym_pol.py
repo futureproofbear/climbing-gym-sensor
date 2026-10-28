@@ -4,7 +4,7 @@ Problem: a gym wants to know how its walls are used (which routes are tried and 
 busy the wall is over the day) without filming who is climbing. Pose (boxes + 17 keypoints per person) is enough, and
 it is what the DeepX NPU produces on the Pi. This turns it into climbs and counts; no image leaves this step.
 
-Per frame, for each tracked person (the footfall Tracker, tracker.py):
+Per frame, for each tracked person (tracker.py):
   where       feet = the lowest visible ankle (else knee, else box bottom); height = feet above the floor line at
               that x, as a share of the wall's height there. People whose box centre is outside the wall region
               (e.g. someone standing behind the top of the wall) are not counted.

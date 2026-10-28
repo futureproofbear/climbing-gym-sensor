@@ -10,6 +10,21 @@ the pose into climbs and counts. Only those leave the unit: for each climb, its 
 skipped, high point, whether it was topped and how it ended. Per minute, how many people are on the wall and in front
 of it. No frame is stored or sent.
 
+## What it looks like
+
+<p>
+<img src="docs/board_climb.gif" width="31%" alt="Animated stick figure climbing an LED board problem">
+<img src="docs/board_climb.png" width="31%" alt="The same climb at four moments, with the hand paths">
+<img src="docs/wall_climb.png" width="31%" alt="A climb on a commercial wall at four moments">
+</p>
+
+Drawn only from what the unit keeps: hold shapes from the map and the climber's body points from the NPU, never a
+video frame. Left and middle: an LED-board problem, lit holds in colour (green start, blue hand, magenta finish), the
+climber from sit start to the finish hold. Right: a commercial wall, purple route, to the top jug. Earlier moments are
+fainter; grey lines are the hand paths. Made with `skeleton_figure.py`.
+
+## How it fits together
+
 ```
 camera ──> pose on the NPU ──> climb logic + wall map ──> climbs.jsonl, summary.json
            deepx_wholebody.py   gym_pol.py                 (gym_live.py runs it live)
@@ -27,16 +42,18 @@ camera ──> pose on the NPU ──> climb logic + wall map ──> climbs.jso
 | [deepx_wholebody.py](deepx_wholebody.py) | Pi + NPU | Pose on a video: YOLO11s-pose finds the climber, RTMW (133 points) runs on a crop around them |
 | [deepx_rtmw_prep.py](deepx_rtmw_prep.py) | laptop | Prepares RTMW for the DeepX compiler: normalisation folded in, batch 1, calibration crops |
 | [deepx_wholebody_compare.py](deepx_wholebody_compare.py) | laptop | What the NPU's quantisation costs: DeepX RTMW against the same model unquantised |
-| [tracker.py](tracker.py) | | The people tracker (the footfall counter's, with re-linking of lost tracks) |
+| [skeleton_figure.py](skeleton_figure.py) | anywhere | A climb as stick figures on a plain canvas (PNG, and an animated GIF) from a map and pose |
+| [tracker.py](tracker.py) | | The people tracker: one ID per person from frame to frame, with lost tracks re-linked |
 
 ## Running it
 
 On the Pi, for a new LED-board camera view (no GPU needed at any step):
 
 ```
-python3 deepx_wholebody.py VIDEO ~/edge-vision/yolo11s-pose_deepx_model rtmw-dw-x-l_256x192.dxnn pose.npz
+python3 deepx_wholebody.py VIDEO models/yolo11s-pose_deepx_model rtmw-dw-x-l_256x192.dxnn pose.npz
 python3 board_map.py VIDEO board_map/ --pose pose.npz     # empty board = the longest stretch with nobody detected
 python3 gym_pol.py board_map/ pose.npz out/               # climbs.jsonl, summary.json, pol_preview.jpg
+python3 skeleton_figure.py board_map/ pose.npz climb.png --gif climb.gif --from 15.5 --to 31   # optional figures
 ```
 
 Live, from a camera stream or a file: `python3 gym_live.py rtsp://... board_map/ out/ [--deploy]`. `--deploy` reports
