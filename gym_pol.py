@@ -2,7 +2,7 @@
 
 Problem: a gym wants to know how its walls are used (which routes are tried and topped, how long climbs take, how
 busy the wall is over the day) without filming who is climbing. Pose (boxes + 17 keypoints per person) is enough, and
-it is what the DeepX NPU produces on the Pi. This turns it into climbs and counts; no image leaves this step.
+it is what the NPU (DeepX or Hailo) produces on the Pi. This turns it into climbs and counts; no image leaves this step.
 
 Per frame, for each tracked person (tracker.py):
   where       feet = the lowest visible ankle (else knee, else box bottom); height = feet above the floor line at
@@ -24,7 +24,7 @@ Aggregates per minute: people on the wall and in front of it, climbs started, to
 median duration; a coarse grid of hand contacts.
 
     python3 gym_pol.py MAP_DIR POSE.npz OUT_DIR [--fps 30]
-POSE.npz: per frame `boxes` [N, 5] (x1 y1 x2 y2 conf) and `kps` [N, 17, 3], object arrays; or deepx_wholebody.py's
+POSE.npz: per frame `boxes` [N, 5] (x1 y1 x2 y2 conf) and `kps` [N, 17, 3], object arrays; or wholebody_video.py's
 output (one climber box per frame, NaN if none, 133 points + `scores`), whose first 17 points are the body.
 writes climbs.jsonl, summary.json, pol_preview.jpg (the empty wall with each climb's holds and hand paths)
 """
@@ -39,15 +39,17 @@ import numpy as np
 from tracker import Tracker
 
 ON_WALL, OFF_WALL = 0.06, 0.03     # share of wall height: feet this far above the floor line are on the wall
-HOLD_S = 0.5                       # s a change of state must hold
+KICKBOARD = 0.05                   # board: feet within this of the floor line (sit start, -0.02) can still be on;
+                                   # someone who stepped back off the board stands lower in the image
+HOLD_S = 0.5                      # s a change of state must hold
 STILL, STILL_S = 0.12, 0.4         # wall heights / s and s: a hand or foot this still for this long is on a hold
                                    # (loose enough for raw NPU keypoints, which jitter by 20-40 px on a 1080p frame)
-REACH = 0.02                       # share of frame width: a contact this close to a hold is on it
+SMOOTH = 5                         # frames in the running median of each hand / foot before the stillness test
+REACH = 0.02                      # share of frame width: a contact this close to a hold is on it
 TOP_S = 1.0                        # s a hand must stay on the route's highest hold to count as topped
 KPT = 0.3
 DUP = 0.6                          # a box overlapping a higher-scored one this much (IoU or containment) is a duplicate
 LOST_S = 0.5                       # s unseen before a climb is set aside as lost
-MIN_CLIMB_S = 1.5                  # shorter climbs with no hold touched are not counted (a box flickering on the wall)
 DROP = 0.3                         # wall heights the feet fall within DROP_S at the end: dropped off, not climbed down
 DROP_S = 0.7
 LINK_S, LINK_DIST = 10.0, 1.5      # a lost climb is continued by a new on-wall track within this long and this close
@@ -148,11 +150,32 @@ def hand_points(k):
     return out
 
 
+def running_median(v, n=SMOOTH):
+    """Each value replaced by the median of it and the n - 1 before it: drops one-frame keypoint jumps (body pose at
+    640 px puts a small climber's wrist 30-60 px off now and then) without blurring a real move."""
+    v = np.asarray(v, float)
+    return np.array([np.median(v[max(0, j - n + 1):j + 1]) for j in range(len(v))])
+
+
+def unswap(pts, limbs):
+    """Left and right as the pair that moved least since the last frame: body-pose models swap a climber's left and
+    right wrists or ankles when the climber faces the wall, which would break every hand's stillness test."""
+    for a, b in (("left hand", "right hand"), ("left foot", "right foot")):
+        if a in pts and b in pts and limbs.get(a) and limbs.get(b):
+            pa, pb = np.array(limbs[a][-1][1:]), np.array(limbs[b][-1][1:])
+            na, nb = np.array(pts[a]), np.array(pts[b])
+            keep = np.linalg.norm(na - pa) + np.linalg.norm(nb - pb)
+            if np.linalg.norm(na - pb) + np.linalg.norm(nb - pa) < keep:
+                pts[a], pts[b] = pts[b], pts[a]
+    return pts
+
+
 class Person:
     def __init__(self):
         self.on_wall = False
         self.since = None              # time the candidate state change started
         self.climb = None
+        self.set_aside = None          # this track's climb while it is set aside as lost
         self.limbs = defaultdict(list)  # limb -> recent (t, x, y)
         self.held = {}                 # limb -> (hold id, since t)
         self.last = None               # (t, cx, cy, box height) last seen
@@ -192,6 +215,13 @@ class GymPoL:
                     if p.climb is None:
                         p.climb = self._new_climb(tr.uid, t)
                         p.climb["seen_from"] = "wall"
+            elif p.on_wall and p.climb is None and p.set_aside is not None:
+                # the tracker revived this track after its climb was set aside as lost: take that climb back
+                item = next((it for it in self.lost if it[1] is p.set_aside), None)
+                if item is not None:
+                    self.lost.remove(item)
+                    p.climb = p.set_aside
+                p.set_aside = None
             p.last = (t, cx, cy, box[3] - box[1])
             p.feet.append((t, h))
             while p.feet and p.feet[0][0] < t - 2.0:
@@ -199,7 +229,7 @@ class GymPoL:
             if not p.on_wall:
                 want = h > ON_WALL or self._on_start(k)
             else:                                   # low on a board the feet are at floor level: a held hand keeps it
-                want = h > OFF_WALL or self._on_start(k) or (bool(self.m.start_holds)
+                want = h > OFF_WALL or self._on_start(k) or (bool(self.m.start_holds) and h > -KICKBOARD
                                                               and any("hand" in l for l in p.held))
             if want != p.on_wall:
                 p.since = p.since if p.since is not None else t
@@ -220,7 +250,7 @@ class GymPoL:
         for uid, p in list(self.people.items()):     # tracks lost on the wall: keep the climb for LINK_S
             if p.climb is not None and t - p.last[0] > LOST_S:
                 self.lost.append((p.last, p.climb))
-                p.climb = None
+                p.set_aside, p.climb = p.climb, None
         for item in list(self.lost):
             if t - item[0][0] > LINK_S:
                 self.lost.remove(item)
@@ -254,7 +284,7 @@ class GymPoL:
 
     def _contacts(self, p, k, t, minute):
         c = p.climb
-        pts = hand_points(k)
+        pts = unswap(hand_points(k), p.limbs)
         for limb, (x, y) in pts.items():
             hist = p.limbs[limb]
             hist.append((t, x, y))
@@ -265,7 +295,7 @@ class GymPoL:
                 c["path"].append((limb[0], round(x), round(y)))
             if len(hist) < 0.6 * STILL_S * self.fps:
                 continue
-            xs, ys = np.array([q[1] for q in hist]), np.array([q[2] for q in hist])
+            xs, ys = running_median([q[1] for q in hist]), running_median([q[2] for q in hist])
             if np.hypot(np.ptp(xs), np.ptp(ys)) / self.m.wall_h / STILL_S > STILL:
                 p.held.pop(limb, None)
                 continue
@@ -297,7 +327,7 @@ class GymPoL:
     def _finish_climb(self, c, t, how):
         c["end"], c["status"] = round(t, 2), how
         c["duration"] = round(c["end"] - c["start"], 2)
-        if c["duration"] < MIN_CLIMB_S and not c["holds"]:
+        if not c["holds"]:                            # no hold touched: a flickering or duplicate box, not a climb
             return
         votes = defaultdict(int)
         for hid, limbs in c["holds"].items():          # hands choose the route; feet often use any nearby hold
@@ -378,7 +408,7 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     z = np.load(a.pose, allow_pickle=True)
     boxes, kps = z["boxes"], z["kps"]
-    if "scores" in z:                                   # deepx_wholebody.py: one climber, 133 points
+    if "scores" in z:                                   # wholebody_video.py: one climber, 133 points
         kps = [np.c_[k[:17], s[:17]] for k, s in zip(kps, z["scores"])]
         kps = [k if not np.isnan(b[0]) else np.zeros((0, 17, 3)) for b, k in zip(boxes, kps)]
         boxes = [b if not np.isnan(b[0]) else np.zeros((0, 5)) for b in boxes]

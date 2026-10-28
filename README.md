@@ -5,7 +5,7 @@ or abandoned, how long climbs take, how busy each wall is by hour. Staff watchin
 are the only sources today. Cameras could answer this, but nobody wants video of people in gym clothes stored
 anywhere.
 
-**What this does.** A Raspberry Pi 5 with a DeepX DX-M1 NPU watches a wall. Pose runs on the NPU; this code turns
+**What this does.** A Raspberry Pi 5 with an M.2 NPU (DeepX DX-M1 or Hailo-8) watches a wall. Pose runs on the NPU; this code turns
 the pose into climbs and counts. Only those leave the unit: for each climb, its start and end, problem, holds used and
 skipped, high point, whether it was topped and how it ended. Per minute, how many people are on the wall and in front
 of it. No frame is stored or sent.
@@ -27,7 +27,7 @@ fainter; grey lines are the hand paths. Made with `skeleton_figure.py`.
 
 ```
 camera ──> pose on the NPU ──> climb logic + wall map ──> climbs.jsonl, summary.json
-           deepx_wholebody.py   gym_pol.py                 (gym_live.py runs it live)
+           wholebody_video.py   gym_pol.py                 (gym_live.py runs it live)
            (or gym_live.py)     map: board_map.py / gym_map.py
 ```
 
@@ -39,7 +39,10 @@ camera ──> pose on the NPU ──> climb logic + wall map ──> climbs.jso
 | [gym_map.py](gym_map.py) | GPU, ~5 min | Map of a commercial wall: empty wall, floor mat, holds (SAM 2.1), routes as hold-colour groups |
 | [gym_pol.py](gym_pol.py) | anywhere, 1 ms a frame | Climbs, routes, tops and per-minute counts from per-frame pose and a map |
 | [gym_live.py](gym_live.py) | Pi + NPU | Live runner: DeepX pose on a video or stream, appends climbs as they end, summary every minute |
-| [deepx_wholebody.py](deepx_wholebody.py) | Pi + NPU | Pose on a video: YOLO11s-pose finds the climber, RTMW (133 points) runs on a crop around them |
+| [npu.py](npu.py) | Pi + NPU | The two pose models on a DeepX or a Hailo-8 behind one interface; picks whichever chip is present (`NPU=` to force) |
+| [wholebody_video.py](wholebody_video.py) | Pi + NPU | Pose on a video: YOLO11s-pose finds the climber, RTMW (133 points) runs on a crop around them |
+| [hailo_rtmw_compile.py](hailo_rtmw_compile.py) | x86 + Hailo DFC | RTMW for the Hailo-8, cut after the backbone with the token head on the CPU (does not yet survive 8-bit quantisation) |
+| [hailo_pose_compile.py](hailo_pose_compile.py) | x86 + Hailo DFC | YOLO11s-pose for the Hailo-8 (`yolo11s_pose.hef`), cut at its 9 head convolutions; decoding and NMS run in npu.py |
 | [deepx_rtmw_prep.py](deepx_rtmw_prep.py) | laptop | Prepares RTMW for the DeepX compiler: normalisation folded in, batch 1, calibration crops |
 | [deepx_wholebody_compare.py](deepx_wholebody_compare.py) | laptop | What the NPU's quantisation costs: DeepX RTMW against the same model unquantised |
 | [skeleton_figure.py](skeleton_figure.py) | anywhere | A climb as stick figures on a plain canvas (PNG, and an animated GIF) from a map and pose |
@@ -50,7 +53,7 @@ camera ──> pose on the NPU ──> climb logic + wall map ──> climbs.jso
 On the Pi, for a new LED-board camera view (no GPU needed at any step):
 
 ```
-python3 deepx_wholebody.py VIDEO models/yolo11s-pose_deepx_model rtmw-dw-x-l_256x192.dxnn pose.npz
+python3 wholebody_video.py VIDEO models/yolo11s-pose_deepx_model rtmw-dw-x-l_256x192.dxnn pose.npz
 python3 board_map.py VIDEO board_map/ --pose pose.npz     # empty board = the longest stretch with nobody detected
 python3 gym_pol.py board_map/ pose.npz out/               # climbs.jsonl, summary.json, pol_preview.jpg
 python3 skeleton_figure.py board_map/ pose.npz climb.png --gif climb.gif --from 15.5 --to 31   # optional figures
@@ -132,6 +135,24 @@ length, for the 17 body points (NPU shared with another sensor):
   resolution, not the chip, set the accuracy.
 - **With the NPU to itself:** YOLO11s-pose alone 21.4 fps; with RTMW dw-x-l 15.5 fps (detect 42 ms, RTMW 16 ms).
   Detection is the bottleneck.
+
+## DeepX or Hailo
+
+`gym_live.py` runs on either chip (`--npu deepx|hailo`, default whichever is fitted). Same three videos, the climb
+logic unchanged between chips:
+
+| | DeepX DX-M1 | Hailo-8 |
+|---|---|---|
+| Pose for the climb logic | YOLO11s-pose (board results here: + RTMW whole-body) | YOLO11s-pose (`yolo11s_pose.hef`) |
+| Live speed on the Pi, end to end | 16 fps (NPU shared with another sensor) | 38-39 fps (NPU to itself) |
+| Commercial wall | 5.1-42.4 s, purple, topped 41.6 s | 5.2-42.4 s, purple, topped 41.5 s |
+| Board, video 2 | 15.9-31.8 s, topped 30.8 s, 2 lit holds skipped | 16.2-31.9 s, topped 30.6 s, same 2 skipped |
+| Board, video 1 | 4.3-29.7 s, topped 26.4 s | 6.2-30.6 s, topped 27.9 s, "climbed down" |
+| Whole-body (hands, feet, face) | yes, RTMW at 11-15 fps | not yet: RTMW compiles but its backbone loses its signal at 8 bits |
+
+Body pose alone (YOLO at 640 px on a 1080p frame) puts a small climber's wrists 30-60 px off now and then, and swaps
+left and right when the climber faces the wall. The climb logic copes: each limb keeps the pairing that moved least,
+and the stillness test runs on a 5-frame running median.
 
 ## Not yet shown
 

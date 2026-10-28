@@ -5,7 +5,7 @@ LED board every hold is the same pale colour on a dark board, and the problem be
 finish (and foot) holds each glow in their own colour. So the map needs no model and runs on the Pi's CPU.
 
   1. empty board: median of frames from a stretch with nobody on it: --empty T0-T1 (seconds), or --pose POSE.npz
-     (deepx_wholebody.py's output for this video: its longest run with nobody detected), else the whole video
+     (wholebody_video.py's output for this video: its longest run with nobody detected), else the whole video
   2. board = the largest dark, unsaturated region, holds filled in; floor line = its bottom edge, top = its top edge
   3. holds = pale blobs inside the board
   4. lit = bright, saturated blobs inside the board; role from hue (LIT_HUES); each joins the hold it touches
@@ -70,7 +70,7 @@ def main_cluster(keep, cen):
 
 
 def empty_span(pose, fps):
-    """Seconds of the longest run of frames with nobody detected, from a pose file (deepx_wholebody.py: NaN boxes;
+    """Seconds of the longest run of frames with nobody detected, from a pose file (wholebody_video.py: NaN boxes;
     gym_pol.py's format: empty box lists)."""
     z = np.load(pose, allow_pickle=True)
     empty = [bool(np.isnan(np.asarray(b, float)).any()) if np.asarray(b).ndim == 1 else len(b) == 0

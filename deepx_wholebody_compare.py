@@ -1,4 +1,4 @@
-"""Score DeepX whole-body keypoints (from deepx_wholebody.py) against the same RTMW model unquantised (ONNX Runtime on the laptop), given
+"""Score DeepX whole-body keypoints (from wholebody_video.py) against the same RTMW model unquantised (ONNX Runtime on the laptop), given
 the same climber boxes, so what differs is what the chip's 8-bit quantisation costs. Errors are % of trunk length.
 
     deepx_wholebody_compare.py VIDEO RTMW.onnx DEEPX.npz [more DEEPX.npz with their onnx: --pair ONNX NPZ]

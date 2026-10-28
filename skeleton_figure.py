@@ -5,7 +5,7 @@ could keep (hold outlines and body points), never a video frame: holds are grey 
 its colours, the climber a skeleton coloured as in the DeepX preview.
 
     python3 skeleton_figure.py MAP_DIR POSE.npz OUT.png [--gif OUT.gif] [--from 15 --to 33] [--fps 30]
-POSE.npz: deepx_wholebody.py's output (one climber per frame) or gym_pol.py's format (the box nearest the last one is
+POSE.npz: wholebody_video.py's output (one climber per frame) or gym_pol.py's format (the box nearest the last one is
 followed). OUT.png: the climb at POSES moments, earlier ones fainter, with the hand paths. --gif: an animation.
 """
 import argparse
