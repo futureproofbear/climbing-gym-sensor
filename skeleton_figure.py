@@ -18,10 +18,11 @@ SCALE = 0.5
 KPT = 0.3
 SMOOTH = 15                 # frames in the running median of the hand paths
 POSES = 4                   # skeletons in the still image
-BODY = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
-        (0, 1), (0, 2), (1, 3), (2, 4)]
+BODY = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16)]
+FACE = range(5)             # nose, eyes, ears: drawn as one head
 FEET = [(15, 17), (15, 18), (15, 19), (16, 20), (16, 21), (16, 22)]   # whole-body pose only (points 17-22)
 BONE, FOOT, JOINT = (0, 200, 255), (80, 220, 80), (40, 40, 220)       # BGR, as in the DeepX preview video
+HEAD_FILL = (170, 235, 255)
 ROLE = {"start": (80, 190, 80), "hand": (230, 170, 40), "finish": (200, 70, 200), "foot": (40, 140, 240)}
 
 
@@ -63,14 +64,32 @@ def base(map_dir):
     return img, (y0, y1)
 
 
+def head(img, k, p):
+    """A filled circle over the visible face points, sized from the shoulders, with a neck to the shoulders."""
+    face = [i for i in FACE if k[i, 2] > KPT]
+    if not face:
+        return
+    c = p[face].mean(0)
+    shoulders = k[5, 2] > KPT and k[6, 2] > KPT
+    r = int(max(9, 0.32 * np.linalg.norm(p[5] - p[6]) if shoulders else 0, 0.7 * np.ptp(p[face], 0).max()))
+    if shoulders:
+        neck = (p[5] + p[6]) / 2
+        d = neck - c
+        start = c + d / max(np.linalg.norm(d), 1) * r       # from the head's edge, not its centre
+        cv2.line(img, tuple(start.astype(int)), tuple(neck.astype(int)), BONE, 3, cv2.LINE_AA)
+    cv2.circle(img, tuple(c.astype(int)), r, HEAD_FILL, -1, cv2.LINE_AA)
+    cv2.circle(img, tuple(c.astype(int)), r, BONE, 3, cv2.LINE_AA)
+
+
 def skeleton(img, k):
-    """Bones amber, feet green, joints red: the DeepX preview's look."""
+    """Bones amber, feet green, joints red: the DeepX preview's look, with the face as a round head."""
     p = (k[:, :2] * SCALE).astype(int)
     for links, colour in ((BODY, BONE), (FEET, FOOT)):
         for i, j in links:
             if j < len(k) and k[i, 2] > KPT and k[j, 2] > KPT:
                 cv2.line(img, tuple(p[i]), tuple(p[j]), colour, 3, cv2.LINE_AA)
-    for i in range(len(k)):
+    head(img, k, p)
+    for i in range(5, len(k)):
         if k[i, 2] > KPT:
             cv2.circle(img, tuple(p[i]), 4, JOINT, -1, cv2.LINE_AA)
 
