@@ -1,0 +1,13 @@
+# media and data stay out of this repo (no images of people)
+*.mp4
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.npz
+*.pt
+*.onnx
+*.dxnn
+models/
+__pycache__/
